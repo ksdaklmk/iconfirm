@@ -3,15 +3,12 @@ import pandas as pd
 import numpy as np
 import altair as alt
 import pydeck as pdk
-import time
 import folium
 from streamlit_folium import folium_static
-from altair import Chart, X, Y, Axis, SortField, OpacityValue
 
 
 st.beta_set_page_config(layout="wide")
 DATE_TIME = "date/time"
-
 
 @st.cache(persist=True)
 def load_data(nrows):
@@ -21,17 +18,14 @@ def load_data(nrows):
     data[DATE_TIME] = pd.to_datetime(data[DATE_TIME])
     return data
 
-
-@st.cache(persist=True)
 def load_branch_data(nrows):
     data = pd.read_csv('7eleven_branch.csv', nrows=nrows, dtype='str')
     return data
 
-
-data = load_data(100000)
-branch_df = load_branch_data(1000)
+data = load_data(10000)
+branch_df = load_branch_data(10000)
 branch_df[['lat', 'lon']] = branch_df[['lat', 'lon']].apply(pd.to_numeric)
-
+data.merge(branch_df, on='branch', how='outer')
 
 def map(data, lat, lon, zoom):
     st.write(pdk.Deck(
@@ -45,7 +39,7 @@ def map(data, lat, lon, zoom):
         layers=[
             pdk.Layer(
                 "HexagonLayer",
-                data=branch_df,
+                data=data,
                 get_position=["lon", "lat"],
                 radius=100,
                 elevation_scale=4,
@@ -53,26 +47,41 @@ def map(data, lat, lon, zoom):
                 pickable=True,
                 extruded=True,
             ),
-            pdk.Layer(
-                'ScatterplotLayer',
-                data = branch_df,
-                get_position = '[lon, lat]',
-                get_color = '[200, 30, 0, 160]',
-                get_radius = 200,
-            ),
         ]
     ))
 
-st.title("i-Confirm @ 7-11 data")
+# Data preparation
 
-row2_1, row2_2 = st.beta_columns((1,1))
+#data = data.replace(branch_df.set_index('branch')['name'])
+monthly_data = pd.read_csv('monthly_data.csv')
+monthly_data.set_index(keys='Month', inplace=True)
+monthly_df = pd.DataFrame(monthly_data)
+top_txn = pd.DataFrame(data['branch'].value_counts().head(10))
+hour_data = data.groupby(data[DATE_TIME].dt.hour).size()
+hist = np.histogram(data[DATE_TIME].dt.hour, bins=24, range=(0, 24))[0]
+hour_df = pd.DataFrame({"hour": range(24), "transactions": hist})
+DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+day_data = data.groupby(data[DATE_TIME].dt.day_name()).size().reindex(DAYS)
+percent_data = (day_data / day_data.sum()) * 100
+days_df = pd.DataFrame({"day": DAYS, "percentage": percent_data})
+days_df.set_index(keys='day', inplace=True)
 
-with row2_1:
+
+# Data visualisation
+
+st.title("i-Confirm @ 7-Eleven")
+
+row1_1, row1_2 = st.beta_columns((1,1))
+row2_1, row2_2, row2_3 = st.beta_columns((1,1,1))
+
+with row1_1:
     st.write("**Nationwide**")
     branch_df[['lat', 'lon']] = branch_df[['lat', 'lon']].apply(pd.to_numeric)
-    st.map(branch_df.dropna(subset=['lat', 'lon']))
+    #data[['lat', 'lon']] = data[['lat', 'lon']].apply(pd.to_numeric)
+    map(branch_df, np.average(branch_df["lat"]), np.average(branch_df["lon"]), 11)
+    #st.map(branch_df.dropna(subset=['lat', 'lon']))
 
-with row2_2:
+with row1_2:
     st.write("**Bangkok**")
     lats = branch_df['lat']
     lons = branch_df['lon']
@@ -86,22 +95,26 @@ with row2_2:
                       ).add_to(m)
     folium_static(m)
 
-monthly_data = pd.read_csv('monthly_data.csv')
-monthly_data.set_index(keys='Month', inplace=True)
-monthly_df = pd.DataFrame(monthly_data)
+with row2_1:
+    st.write("**Rank #1**")
+
+with row2_2:
+    st.write("**Rank #2**")
+
+with row2_3:
+    st.write("**Rank #3**")
+
 st.subheader('**Number of transactions between Bangkok and provincial area by month**')
 st.line_chart(monthly_df)
 
 st.subheader('Top branches having customers identified oneself')
-counter = st.slider('Select top number', 10, 50)
-top_txn = pd.DataFrame(data['branch'].value_counts().head(counter))
-st.bar_chart(top_txn)
-if st.checkbox('Show raw data'):
-    st.write(top_txn)
 
-hour_data = data.groupby(data[DATE_TIME].dt.hour).size()
-hist = np.histogram(data[DATE_TIME].dt.hour, bins=24, range=(0, 24))[0]
-hour_df = pd.DataFrame({"hour": range(24), "transactions": hist})
+st.bar_chart(top_txn)
+if st.checkbox('Show top branches data table'):
+    data = data.replace(branch_df.set_index('branch')['name'])
+    top_name = pd.DataFrame(data['branch'].value_counts().head(10))
+    st.write(top_name)
+
 st.subheader('Breakdown of transactions per hour')
 st.altair_chart(alt.Chart(hour_df)
     .mark_area(
@@ -114,3 +127,12 @@ st.altair_chart(alt.Chart(hour_df)
         opacity=0.5,
         color='red'
     ), use_container_width=True)
+
+if st.checkbox('Show transactions data table'):
+    st.write(hour_df)
+
+st.subheader('Percentage of transactions by day of week')
+st.bar_chart(days_df)
+st.line_chart(days_df)
+if st.checkbox('Show percentage data table'):
+    st.write(days_df)
